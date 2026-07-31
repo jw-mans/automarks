@@ -13,8 +13,8 @@ from django.urls import reverse
 from django.utils import timezone
 from openpyxl import load_workbook
 
-from .forms import BranchForm
-from .models import Bot, Branch, Experiment, Product, TaskRequest, UserProfile
+from .forms import BranchForm, TikTokFunnelRequestForm
+from .models import Bot, Branch, Experiment, Product, TaskRequest, TikTokFunnelRequest, UserProfile
 from .task_time import get_tasks_timezone
 
 
@@ -1164,3 +1164,142 @@ class BranchFormTests(TaskBoardBaseTestCase):
         form = BranchForm(bot=self.bot)
 
         self.assertEqual(form.initial["code"], "ell03")
+
+
+class TikTokFunnelHelpersTests(TestCase):
+    def test_normalize_endpoint_strips_domain_query_and_trailing_slash(self):
+        cases = {
+            "/pasha_all": "/pasha_all",
+            "/pasha_all/": "/pasha_all",
+            "pasha_all": "/pasha_all",
+            "go-egeland.ru/pasha_all": "/pasha_all",
+            "https://go-egeland.ru/pasha_all/?utm=1": "/pasha_all",
+            "  /pasha_all?x=1#frag ": "/pasha_all",
+            "https://go-egeland.ru/a/b/c": "/a/b/c",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(TikTokFunnelRequest.normalize_endpoint(raw), expected, raw)
+
+    def test_normalize_endpoint_empty(self):
+        self.assertEqual(TikTokFunnelRequest.normalize_endpoint(""), "")
+        self.assertEqual(TikTokFunnelRequest.normalize_endpoint(None), "")
+
+    def test_parse_bot_name(self):
+        cases = {
+            "https://telegram.me/efir_tt_el_bot": "efir_tt_el_bot",
+            "https://t.me/efir_tt_el_bot/": "efir_tt_el_bot",
+            "t.me/@some_bot": "some_bot",
+            "https://t.me/+joinhash": "joinhash",
+            "": "",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(TikTokFunnelRequest.parse_bot_name(raw), expected, raw)
+
+
+class TikTokFunnelFormTests(TestCase):
+    def test_form_normalizes_endpoint_and_derives_bot_name(self):
+        form = TikTokFunnelRequestForm(
+            data={
+                "landing_endpoint": "https://go-egeland.ru/pasha_all/",
+                "offer": "  ell010005 ",
+                "bot_url": "https://telegram.me/efir_tt_el_bot",
+                "comment": "",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        self.assertEqual(obj.landing_endpoint, "/pasha_all")
+        self.assertEqual(obj.offer, "ell010005")
+        self.assertEqual(form.cleaned_data["bot_name"], "efir_tt_el_bot")
+
+    def test_form_rejects_root_endpoint(self):
+        form = TikTokFunnelRequestForm(
+            data={"landing_endpoint": "https://go-egeland.ru/", "offer": "x", "bot_url": "t.me/b"}
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("landing_endpoint", form.errors)
+
+
+class TikTokFunnelViewTests(TaskBoardBaseTestCase):
+    def test_page_renders(self):
+        TikTokFunnelRequest.objects.create(
+            landing_endpoint="/pasha_all",
+            offer="ell010005",
+            bot_url="https://telegram.me/efir_tt_el_bot",
+            bot_name="efir_tt_el_bot",
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.get(reverse("tiktok_funnels"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "TikTok-воронки")
+        self.assertContains(response, "/pasha_all")
+
+    @patch("marks.views.notify_new_tiktok_funnel", return_value=(True, ""))
+    @patch("marks.views.provision_funnel", return_value=(True, True, ""))
+    def test_create_funnel(self, provision_mock, notify_mock):
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("create_tiktok_funnel"),
+            data={
+                "landing_endpoint": "go-egeland.ru/pasha_all",
+                "offer": "ell010005",
+                "bot_url": "https://telegram.me/efir_tt_el_bot",
+                "comment": "тест",
+            },
+        )
+        self.assertRedirects(response, reverse("tiktok_funnels"))
+        funnel = TikTokFunnelRequest.objects.get()
+        self.assertEqual(funnel.landing_endpoint, "/pasha_all")
+        self.assertEqual(funnel.bot_name, "efir_tt_el_bot")
+        self.assertEqual(funnel.status, TikTokFunnelRequest.Status.PENDING)
+        self.assertTrue(funnel.warehouse_synced)
+        provision_mock.assert_called_once()
+        notify_mock.assert_called_once()
+
+    @patch("marks.views.notify_new_tiktok_funnel", return_value=(True, ""))
+    @patch("marks.views.provision_funnel", return_value=(False, False, "склад недоступен"))
+    def test_create_funnel_keeps_request_when_warehouse_fails(self, provision_mock, notify_mock):
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("create_tiktok_funnel"),
+            data={
+                "landing_endpoint": "/pasha_all",
+                "offer": "ell010005",
+                "bot_url": "https://telegram.me/efir_tt_el_bot",
+            },
+        )
+        self.assertRedirects(response, reverse("tiktok_funnels"))
+        funnel = TikTokFunnelRequest.objects.get()
+        self.assertFalse(funnel.warehouse_synced)
+
+    @patch("marks.views.activate_funnel", return_value=(True, ""))
+    def test_activate_funnel(self, activate_mock):
+        funnel = TikTokFunnelRequest.objects.create(
+            landing_endpoint="/pasha_all",
+            offer="ell010005",
+            bot_url="https://telegram.me/efir_tt_el_bot",
+            bot_name="efir_tt_el_bot",
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("activate_tiktok_funnel", args=[funnel.id]),
+            data={"pixel_code": "D5NMAQRC77U4HM3KJMPG"},
+        )
+        self.assertRedirects(response, reverse("tiktok_funnels"))
+        funnel.refresh_from_db()
+        self.assertEqual(funnel.status, TikTokFunnelRequest.Status.ACTIVE)
+        self.assertEqual(funnel.pixel_code, "D5NMAQRC77U4HM3KJMPG")
+        activate_mock.assert_called_once()
+
+    def test_manager_cannot_activate(self):
+        funnel = TikTokFunnelRequest.objects.create(
+            landing_endpoint="/pasha_all",
+            offer="ell010005",
+            bot_url="https://telegram.me/efir_tt_el_bot",
+        )
+        self.client.force_login(self.manager_user)
+        response = self.client.post(
+            reverse("activate_tiktok_funnel", args=[funnel.id]),
+            data={"pixel_code": "X"},
+        )
+        self.assertEqual(response.status_code, 403)

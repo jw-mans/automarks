@@ -28,3 +28,6 @@ staticfiles/
 dist/
 build/
 *.egg-info/
+
+# auxiliary files
+n8n-jsons/

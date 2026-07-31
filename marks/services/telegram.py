@@ -250,6 +250,29 @@ def notify_done_to_user(task, tg_username):
     return False, fallback_error or error
 
 
+def notify_new_tiktok_funnel(funnel_request):
+    chat_id = getattr(settings, "TELEGRAM_NOTIFY_TIKTOK_CHAT_ID", "") or getattr(
+        settings, "TELEGRAM_NOTIFY_NEW_TASKS_CHAT_ID", ""
+    )
+    platform_name = (getattr(settings, "TASKS_PLATFORM_NAME", "") or "").strip()
+    header = (
+        f"[{_safe(platform_name)}] Новая TikTok-заявка"
+        if platform_name
+        else "Новая TikTok-заявка"
+    )
+    lines = [
+        f"Эндпоинт: {_safe(funnel_request.landing_endpoint)}",
+        f"Оффер: {_safe(funnel_request.offer)}",
+        f"Бот: {_safe(funnel_request.bot_url)}",
+        f"Создал: {_safe(funnel_request.created_by.username if funnel_request.created_by else '-')}",
+    ]
+    if funnel_request.comment:
+        lines.append(f"Комментарий: {_safe(funnel_request.comment)}")
+    lines.append("\nПодключите пиксель и токен, затем активируйте воронку.")
+    text = f"{header}\n\n" + "\n".join(lines)
+    return _send_message(chat_id=chat_id, text=text)
+
+
 def send_weekly_tasks_report(chat_id, filename, content_bytes, caption=""):
     return _send_document(chat_id=chat_id, filename=filename, content_bytes=content_bytes, caption=caption)
 

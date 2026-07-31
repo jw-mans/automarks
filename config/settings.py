@@ -85,6 +85,28 @@ DATABASES = {
 }
 
 
+# Global warehouse (remote Postgres, schema `activation_data`) — same target as
+# scripts/sync_to_global.sh. Used only for direct writes to the TikTok funnels
+# reference table via connections["global"]; Django never migrates or routes ORM
+# models here (see marks.db_routers.GlobalWarehouseRouter).
+GLOBAL_DB_SCHEMA = os.getenv("GLOBAL_PGSCHEMA", "activation_data")
+GLOBAL_DB_HOST = os.getenv("GLOBAL_PGHOST", "")
+if GLOBAL_DB_HOST:
+    DATABASES["global"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("GLOBAL_PGDB", ""),
+        "USER": os.getenv("GLOBAL_PGUSER", ""),
+        "PASSWORD": os.getenv("GLOBAL_PGPASSWORD", ""),
+        "HOST": GLOBAL_DB_HOST,
+        "PORT": os.getenv("GLOBAL_PGPORT", "5432"),
+        "OPTIONS": {"sslmode": os.getenv("GLOBAL_PGSSLMODE", "require")},
+        # Never run automarks' schema migrations against the shared warehouse.
+        "TEST": {"MIRROR": "default"},
+    }
+
+DATABASE_ROUTERS = ["marks.db_routers.GlobalWarehouseRouter"]
+
+
 
 
 
@@ -162,6 +184,11 @@ CSRF_TRUSTED_ORIGINS = [
 TELEGRAM_NOTIFY_BOT_TOKEN = os.getenv("TELEGRAM_NOTIFY_BOT_TOKEN", "")
 TELEGRAM_NOTIFY_NEW_TASKS_CHAT_ID = os.getenv("TELEGRAM_NOTIFY_NEW_TASKS_CHAT_ID", "")
 TELEGRAM_NOTIFY_STATUS_CHAT_ID = os.getenv("TELEGRAM_NOTIFY_STATUS_CHAT_ID", "")
+# Chat for "new TikTok funnel request" notifications to developers.
+# Falls back to the new-tasks chat when unset.
+TELEGRAM_NOTIFY_TIKTOK_CHAT_ID = os.getenv(
+    "TELEGRAM_NOTIFY_TIKTOK_CHAT_ID", TELEGRAM_NOTIFY_NEW_TASKS_CHAT_ID
+)
 TASKS_PLATFORM_NAME = os.getenv("TASKS_PLATFORM_NAME", "")
 WEEKLY_TASKS_REPORT_CHAT_ID = os.getenv("WEEKLY_TASKS_REPORT_CHAT_ID", "")
 WEEKLY_TASKS_REPORT_TZ = os.getenv("WEEKLY_TASKS_REPORT_TZ", "Europe/Moscow")

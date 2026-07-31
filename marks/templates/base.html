@@ -29,6 +29,7 @@
         {% if user.is_authenticated %}
           <li class="nav-item"><a class="nav-link" href="{% url 'bots_list' %}">Боты</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'tasks_board' %}">Задачи</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'tiktok_funnels' %}">TikTok-воронки</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'experiments_board' %}">Эксперименты</a></li>
         {% endif %}
       </ul>

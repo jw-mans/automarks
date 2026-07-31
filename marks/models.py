@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
 from django.db import models
@@ -474,6 +474,93 @@ class Tag(models.Model):
 def create_first_tag(sender, instance, created, **kwargs):
     if created and not instance.tags.exists():
         Tag.objects.create(branch=instance)
+
+
+class TikTokFunnelRequest(models.Model):
+    """Marketer's intake for a new TikTok funnel.
+
+    Marketer fills endpoint/offer/bot; a developer later connects pixel + token
+    on the warehouse side and flips the funnel to ``active``. This record is the
+    automarks-side source of truth for the request; on creation a matching draft
+    row (status=pending) is provisioned into ``activation_data.tt_funnels`` on the
+    warehouse via marks.services.funnels.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает подключения"
+        ACTIVE = "active", "Активна"
+
+    landing_endpoint = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="location.pathname лендинга, например /pasha_all",
+    )
+    offer = models.CharField(max_length=255, help_text="Оффер/метка, например ell010005")
+    bot_url = models.CharField(max_length=500, help_text="Ссылка на бота")
+    bot_name = models.CharField(max_length=255, blank=True, default="")
+    pixel_code = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    comment = models.TextField(blank=True, default="")
+    warehouse_synced = models.BooleanField(
+        default=False,
+        help_text="Черновик воронки успешно записан в activation_data.tt_funnels",
+    )
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.landing_endpoint} ({self.get_status_display()})"
+
+    @staticmethod
+    def normalize_endpoint(raw):
+        """Reduce any user input to a bare ``/path`` matching location.pathname.
+
+        Strips scheme/domain, query and fragment, collapses a trailing slash and
+        guarantees a single leading slash. This must match what the landing
+        script writes into visits_data.landing_endpoint, otherwise the warehouse
+        JOIN never matches.
+        """
+        value = (raw or "").strip()
+        if not value:
+            return ""
+
+        if "://" in value:
+            value = urlsplit(value).path
+        else:
+            # Drop a leading bare domain like "go-egeland.ru/pasha_all".
+            head = value.split("/", 1)[0]
+            if "." in head and " " not in head:
+                value = urlsplit("//" + value).path
+            else:
+                # Strip a stray query/fragment even without a domain.
+                value = value.split("?", 1)[0].split("#", 1)[0]
+
+        value = value.strip()
+        if not value:
+            return ""
+        if not value.startswith("/"):
+            value = "/" + value
+        if len(value) > 1:
+            value = "/" + value.strip("/")
+        return value
+
+    @staticmethod
+    def parse_bot_name(bot_url):
+        """Extract a bare bot identifier from a bot link.
+
+        ``https://telegram.me/efir_tt_el_bot`` -> ``efir_tt_el_bot``; tolerates a
+        trailing slash, query string and ``@``/``+`` prefixes.
+        """
+        raw = (bot_url or "").strip()
+        if not raw:
+            return ""
+        path = urlsplit(raw if "://" in raw else "//" + raw).path
+        segment = path.rstrip("/").rsplit("/", 1)[-1]
+        return segment.lstrip("@+").strip()
 
 
 class UserProfile(models.Model):

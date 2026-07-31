@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}TikTok-воронки{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">TikTok-воронки</h2>
+
+<div class="row g-4">
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light"><b>Новая заявка на воронку</b></div>
+      <div class="card-body">
+        <form method="post" action="{% url 'create_tiktok_funnel' %}" class="row g-3" autocomplete="off">
+          {% csrf_token %}
+          <div class="col-12">
+            <label class="form-label">{{ form.landing_endpoint.label }}</label>
+            {{ form.landing_endpoint }}
+            <div class="form-text">{{ form.landing_endpoint.help_text }}</div>
+            {% for error in form.landing_endpoint.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="col-12">
+            <label class="form-label">{{ form.offer.label }}</label>
+            {{ form.offer }}
+            {% for error in form.offer.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="col-12">
+            <label class="form-label">{{ form.bot_url.label }}</label>
+            {{ form.bot_url }}
+            {% for error in form.bot_url.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="col-12">
+            <label class="form-label">{{ form.comment.label }}</label>
+            {{ form.comment }}
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary w-100">Создать заявку</button>
+          </div>
+        </form>
+        <div class="small text-muted mt-3">
+          Пиксель и токен подключает разработчик после создания заявки.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light"><b>Заявки</b></div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Эндпоинт</th>
+                <th>Оффер</th>
+                <th>Бот</th>
+                <th>Статус</th>
+                <th>Склад</th>
+                {% if can_manage %}<th>Действия</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for funnel in funnels %}
+                <tr>
+                  <td>{{ funnel.id }}</td>
+                  <td class="text-break"><code>{{ funnel.landing_endpoint }}</code></td>
+                  <td class="text-break">{{ funnel.offer }}</td>
+                  <td class="text-break">
+                    <a href="{{ funnel.bot_url }}" target="_blank" rel="noopener">{{ funnel.bot_name|default:funnel.bot_url }}</a>
+                  </td>
+                  <td>
+                    {% if funnel.status == 'active' %}
+                      <span class="badge text-bg-success">{{ funnel.get_status_display }}</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">{{ funnel.get_status_display }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if funnel.warehouse_synced %}
+                      <span class="badge text-bg-light text-success">синхронизирована</span>
+                    {% else %}
+                      <span class="badge text-bg-warning text-dark">не в складе</span>
+                    {% endif %}
+                  </td>
+                  {% if can_manage %}
+                  <td style="min-width: 240px;">
+                    {% if not funnel.warehouse_synced %}
+                      <form method="post" action="{% url 'retry_tiktok_funnel_sync' funnel.id %}" class="mb-2">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-secondary btn-sm w-100">Записать в склад</button>
+                      </form>
+                    {% endif %}
+                    {% if funnel.status != 'active' %}
+                      <form method="post" action="{% url 'activate_tiktok_funnel' funnel.id %}" class="d-flex gap-2">
+                        {% csrf_token %}
+                        <input type="text" name="pixel_code" class="form-control form-control-sm" placeholder="pixel_code" value="{{ funnel.pixel_code }}">
+                        <button class="btn btn-success btn-sm text-nowrap">Активировать</button>
+                      </form>
+                    {% else %}
+                      <span class="small text-muted">pixel: <code>{{ funnel.pixel_code|default:"-" }}</code></span>
+                    {% endif %}
+                  </td>
+                  {% endif %}
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="{% if can_manage %}7{% else %}6{% endif %}" class="text-center text-muted py-4">Заявок пока нет.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

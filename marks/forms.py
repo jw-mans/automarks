@@ -15,6 +15,7 @@ from .models import (
     Product,
     Tag,
     TaskRequest,
+    TikTokFunnelRequest,
     TrafficReport,
 )
 from .task_time import TASK_INPUT_FORMATS, parse_task_input_datetime
@@ -482,6 +483,67 @@ class TaskStatusForm(forms.ModelForm):
         fields = ["status"]
         labels = {"status": "Статус"}
         widgets = {"status": forms.Select(attrs={"class": "form-select form-select-sm"})}
+
+
+class TikTokFunnelRequestForm(forms.ModelForm):
+    class Meta:
+        model = TikTokFunnelRequest
+        fields = ["landing_endpoint", "offer", "bot_url", "comment"]
+        labels = {
+            "landing_endpoint": "Эндпоинт лендинга",
+            "offer": "Оффер",
+            "bot_url": "Ссылка на бота",
+            "comment": "Комментарий",
+        }
+        widgets = {
+            "landing_endpoint": forms.TextInput(attrs={"placeholder": "/pasha_all"}),
+            "offer": forms.TextInput(attrs={"placeholder": "ell010005"}),
+            "bot_url": forms.TextInput(attrs={"placeholder": "https://telegram.me/efir_tt_el_bot"}),
+            "comment": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            css = "form-control"
+            field.widget.attrs.setdefault("class", css)
+            field.widget.attrs.setdefault("autocomplete", "off")
+        self.fields["landing_endpoint"].required = True
+        self.fields["offer"].required = True
+        self.fields["bot_url"].required = True
+        self.fields["landing_endpoint"].help_text = (
+            "location.pathname лендинга. Домен, query и хвостовой слэш убираются автоматически."
+        )
+
+    def clean_offer(self):
+        return " ".join((self.cleaned_data.get("offer") or "").split())
+
+    def clean_landing_endpoint(self):
+        raw = self.cleaned_data.get("landing_endpoint") or ""
+        endpoint = TikTokFunnelRequest.normalize_endpoint(raw)
+        if not endpoint or endpoint == "/":
+            raise forms.ValidationError("Укажите путь лендинга, например /pasha_all.")
+        return endpoint
+
+    def clean_bot_url(self):
+        value = " ".join((self.cleaned_data.get("bot_url") or "").split())
+        if not value:
+            raise forms.ValidationError("Укажите ссылку на бота.")
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        bot_url = cleaned.get("bot_url")
+        if bot_url:
+            cleaned["bot_name"] = TikTokFunnelRequest.parse_bot_name(bot_url)
+        return cleaned
+
+    def save(self, commit=True):
+        obj = super().save(commit=False)
+        obj.bot_name = self.cleaned_data.get("bot_name") or TikTokFunnelRequest.parse_bot_name(obj.bot_url)
+        if commit:
+            obj.save()
+        return obj
 
 
 class LegacyExperimentForm(forms.ModelForm):

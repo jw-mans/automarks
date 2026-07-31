@@ -10,7 +10,7 @@ from django.conf import settings
 from django.contrib.auth import login
 from django.urls import reverse
 from datetime import datetime, timedelta, time
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from decimal import Decimal
@@ -29,7 +29,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 
-from .models import Bot, Branch, Tag, Product, PlanMonthly, Funnel, TrafficReport, PatchNote, UserProfile, TaskRequest, Experiment
+from .models import Bot, Branch, Tag, Product, PlanMonthly, Funnel, TrafficReport, PatchNote, UserProfile, TaskRequest, TikTokFunnelRequest, Experiment
 from .forms import (
     BotForm,
     VKBotForm,
@@ -43,6 +43,7 @@ from .forms import (
     MailingTaskRequestForm,
     BuildTaskRequestForm,
     TaskStatusForm,
+    TikTokFunnelRequestForm,
 )
 from .experiment_forms import ExperimentCompletionForm, ExperimentForm
 from .permissions import require_roles, BOT_OPERATORS_GROUP
@@ -50,9 +51,11 @@ from .services.telegram import (
     notify_new_task,
     notify_status_change,
     notify_done_to_user,
+    notify_new_tiktok_funnel,
     send_weekly_tasks_report,
     send_text_message,
 )
+from .services.funnels import provision_funnel, activate_funnel
 from .services.task_legacy import (
     get_task_feedback_map,
     get_task_tg_username,
@@ -1550,6 +1553,123 @@ def update_task_status(request, task_id):
     else:
         messages.info(request, "Статус не изменился.")
     return redirect("tasks_board")
+
+
+@login_required
+@require_roles('admin', 'manager', 'marketer', 'analyst', UserProfile.Role.BOT_USER)
+def tiktok_funnels(request):
+    funnels = list(TikTokFunnelRequest.objects.select_related("created_by"))
+    return render(
+        request,
+        "marks/tiktok_funnels.html",
+        {
+            "form": TikTokFunnelRequestForm(),
+            "funnels": funnels,
+            "can_manage": user_is_admin(request.user),
+        },
+    )
+
+
+@login_required
+@require_POST
+@require_roles('admin', 'manager', 'marketer', 'analyst', UserProfile.Role.BOT_USER)
+def create_tiktok_funnel(request):
+    form = TikTokFunnelRequestForm(request.POST)
+    if not form.is_valid():
+        funnels = list(TikTokFunnelRequest.objects.select_related("created_by"))
+        messages.error(request, "Не удалось создать заявку. Проверьте поля.")
+        return render(
+            request,
+            "marks/tiktok_funnels.html",
+            {"form": form, "funnels": funnels, "can_manage": user_is_admin(request.user)},
+        )
+
+    try:
+        funnel = form.save(commit=False)
+        funnel.created_by = request.user
+        funnel.status = TikTokFunnelRequest.Status.PENDING
+        funnel.save()
+    except IntegrityError:
+        messages.error(request, "Воронка на этот endpoint уже существует.")
+        return redirect("tiktok_funnels")
+    except Exception:
+        logger.exception("Failed to create TikTok funnel request (user_id=%s)", getattr(request.user, "id", None))
+        messages.error(request, "Внутренняя ошибка при создании заявки. Детали в логах.")
+        return redirect("tiktok_funnels")
+
+    # Provision a pending draft row in the warehouse. A failure here must not
+    # lose the local request — surface a warning and allow a later retry.
+    ok, created, error = provision_funnel(
+        landing_endpoint=funnel.landing_endpoint,
+        offer=funnel.offer,
+        bot_url=funnel.bot_url,
+        bot_name=funnel.bot_name,
+    )
+    if ok:
+        if funnel.warehouse_synced is False:
+            TikTokFunnelRequest.objects.filter(pk=funnel.pk).update(warehouse_synced=True)
+        if not created:
+            messages.warning(
+                request,
+                "Заявка сохранена, но в складе уже была воронка на этот endpoint — черновик не перезаписан.",
+            )
+    else:
+        messages.warning(
+            request,
+            "Заявка сохранена, но черновик в складе не записан. " + (error or "Повторите позже.")
+            + " Можно повторить синхронизацию из списка.",
+        )
+
+    notify_ok, notify_error = True, ""
+    try:
+        notify_result = notify_new_tiktok_funnel(funnel)
+        if isinstance(notify_result, tuple):
+            notify_ok, notify_error = notify_result
+    except Exception:
+        logger.exception("Failed to send TikTok funnel notification (id=%s)", funnel.id)
+        notify_ok, notify_error = False, "Сбой отправки уведомления."
+
+    messages.success(request, "Заявка на TikTok-воронку создана.")
+    if not notify_ok:
+        messages.warning(request, "Уведомление в Telegram не отправлено. " + (notify_error or ""))
+    return redirect("tiktok_funnels")
+
+
+@login_required
+@require_POST
+@require_roles(UserProfile.Role.ADMIN)
+def retry_tiktok_funnel_sync(request, funnel_id):
+    funnel = get_object_or_404(TikTokFunnelRequest, id=funnel_id)
+    ok, created, error = provision_funnel(
+        landing_endpoint=funnel.landing_endpoint,
+        offer=funnel.offer,
+        bot_url=funnel.bot_url,
+        bot_name=funnel.bot_name,
+    )
+    if ok:
+        TikTokFunnelRequest.objects.filter(pk=funnel.pk).update(warehouse_synced=True)
+        messages.success(request, "Черновик воронки записан в склад.")
+    else:
+        messages.error(request, "Не удалось записать в склад. " + (error or ""))
+    return redirect("tiktok_funnels")
+
+
+@login_required
+@require_POST
+@require_roles(UserProfile.Role.ADMIN)
+def activate_tiktok_funnel(request, funnel_id):
+    funnel = get_object_or_404(TikTokFunnelRequest, id=funnel_id)
+    pixel_code = (request.POST.get("pixel_code") or "").strip()
+    ok, error = activate_funnel(landing_endpoint=funnel.landing_endpoint, pixel_code=pixel_code)
+    if ok:
+        TikTokFunnelRequest.objects.filter(pk=funnel.pk).update(
+            status=TikTokFunnelRequest.Status.ACTIVE,
+            pixel_code=pixel_code,
+        )
+        messages.success(request, "Воронка активирована.")
+    else:
+        messages.error(request, "Активация не выполнена. " + (error or ""))
+    return redirect("tiktok_funnels")
 
 
 @csrf_exempt

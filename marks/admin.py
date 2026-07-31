@@ -10,6 +10,7 @@ from .models import (
     PatchNote,
     UserProfile,
     TaskRequest,
+    TikTokFunnelRequest,
     Experiment,
 )
 
@@ -81,6 +82,13 @@ class TaskRequestAdmin(admin.ModelAdmin):
     list_filter = ("task_type", "status", "deadline")
     search_fields = ("comment", "build_name", "cjm_url", "tz_url", "created_by__username")
     filter_horizontal = ("branches",)
+
+
+@admin.register(TikTokFunnelRequest)
+class TikTokFunnelRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "landing_endpoint", "offer", "bot_name", "status", "warehouse_synced", "created_by", "created_at")
+    list_filter = ("status", "warehouse_synced")
+    search_fields = ("landing_endpoint", "offer", "bot_name", "bot_url", "pixel_code")
 
 
 @admin.register(Experiment)
