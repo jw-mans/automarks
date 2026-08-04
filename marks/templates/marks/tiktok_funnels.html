@@ -54,7 +54,7 @@
       <div class="card-header bg-light"><b>Заявки</b></div>
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
+          <table class="table table-sm align-middle mb-0" style="min-width: 760px;">
             <thead>
               <tr>
                 <th>#</th>
@@ -70,10 +70,10 @@
               {% for funnel in funnels %}
                 <tr>
                   <td>{{ funnel.id }}</td>
-                  <td class="text-break"><code>{{ funnel.landing_endpoint }}</code></td>
-                  <td class="text-break">{{ funnel.offer }}</td>
-                  <td class="text-break">
-                    <a href="{{ funnel.bot_url }}" target="_blank" rel="noopener">{{ funnel.bot_name|default:funnel.bot_url }}</a>
+                  <td class="text-nowrap"><code>{{ funnel.landing_endpoint }}</code></td>
+                  <td class="text-nowrap">{{ funnel.offer }}</td>
+                  <td>
+                    <a href="{{ funnel.bot_url }}" target="_blank" rel="noopener" class="text-nowrap">{{ funnel.bot_name|default:funnel.bot_url }}</a>
                   </td>
                   <td>
                     {% if funnel.status == 'active' %}
